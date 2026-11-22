@@ -1,1 +1,392 @@
 
+import re
+import time
+import random
+
+
+# ==========================================
+# FUNCTION 1: NORMALISE PHONE NUMBER
+# ==========================================
+
+def normalize_phone(phone):
+    digits = re.sub(r"\D", "", str(phone))
+
+    if digits.startswith("0091") and len(digits) == 14:
+        digits = digits[4:]
+
+    elif digits.startswith("91") and len(digits) == 12:
+        digits = digits[2:]
+
+    return digits if digits else None
+
+
+# ==========================================
+# FUNCTION 2: NORMALISE NAME AND EMAIL
+# ==========================================
+
+def normalize_name(name):
+    return " ".join(str(name).lower().split())
+
+
+def normalize_email(email):
+    return str(email).strip().lower()
+
+
+# ==========================================
+# FUNCTION 3: PREPARE CONTACT DATA
+# ==========================================
+
+def prepare_contacts(contacts):
+
+    prepared = []
+
+    for contact in contacts:
+
+        phone_values = contact.get("phones", [])
+
+        if isinstance(phone_values, str):
+            phone_values = [phone_values]
+
+        if not phone_values:
+            phone_values = [contact.get("phone", "")]
+
+        email_values = contact.get("emails", [])
+
+        if isinstance(email_values, str):
+            email_values = [email_values]
+
+        if not email_values:
+            email_values = [contact.get("email", "")]
+
+        phones = {
+            normalize_phone(p)
+            for p in phone_values
+            if normalize_phone(p)
+        }
+
+        emails = {
+            normalize_email(e)
+            for e in email_values
+            if normalize_email(e)
+        }
+
+        name = str(contact.get("name", "")).strip()
+
+        prepared.append({
+            "name": name,
+            "phones": phones,
+            "emails": emails
+        })
+
+    return prepared
+
+
+# ==========================================
+# FUNCTION 4: UNION FIND DATA STRUCTURE
+# ==========================================
+
+def find(parent, x):
+
+    if parent[x] != x:
+        parent[x] = find(parent, parent[x])
+
+    return parent[x]
+
+
+def union(parent, a, b):
+
+    root_a = find(parent, a)
+    root_b = find(parent, b)
+
+    if root_a != root_b:
+        parent[root_b] = root_a
+
+
+# ==========================================
+# FUNCTION 5: EFFICIENT CONTACT MERGING
+# ==========================================
+
+def merge_contacts(contacts):
+
+    data = prepare_contacts(contacts)
+
+    n = len(data)
+
+    parent = list(range(n))
+
+    number_dictionary = {}
+
+    # Group contacts using normalised phone numbers
+    for i, contact in enumerate(data):
+
+        for number in contact["phones"]:
+
+            if number in number_dictionary:
+
+                union(
+                    parent,
+                    i,
+                    number_dictionary[number]
+                )
+
+            else:
+                number_dictionary[number] = i
+
+    # Combine all contact details
+    merged = {}
+
+    for i, contact in enumerate(data):
+
+        root = find(parent, i)
+
+        if root not in merged:
+
+            merged[root] = {
+                "names": set(),
+                "phones": set(),
+                "emails": set()
+            }
+
+        if contact["name"]:
+            merged[root]["names"].add(contact["name"])
+
+        merged[root]["phones"].update(contact["phones"])
+        merged[root]["emails"].update(contact["emails"])
+
+    result = []
+
+    for details in merged.values():
+
+        result.append({
+            "names": sorted(details["names"]),
+            "phones": sorted(details["phones"]),
+            "emails": sorted(details["emails"])
+        })
+
+    return result
+
+
+# ==========================================
+# FUNCTION 6: ORIGINAL PAIRWISE METHOD
+# ==========================================
+
+def pairwise_merge(contacts):
+
+    data = prepare_contacts(contacts)
+
+    n = len(data)
+
+    parent = list(range(n))
+    comparisons = 0
+
+    for i in range(n):
+
+        for j in range(i + 1, n):
+
+            comparisons += 1
+
+            if data[i]["phones"] & data[j]["phones"]:
+
+                union(parent, i, j)
+
+    merged = {}
+
+    for i, contact in enumerate(data):
+
+        root = find(parent, i)
+
+        if root not in merged:
+
+            merged[root] = {
+                "names": set(),
+                "phones": set(),
+                "emails": set()
+            }
+
+        if contact["name"]:
+            merged[root]["names"].add(contact["name"])
+
+        merged[root]["phones"].update(contact["phones"])
+        merged[root]["emails"].update(contact["emails"])
+
+    return merged, comparisons
+
+
+# ==========================================
+# FUNCTION 7: GENERATE TEST CONTACTS
+# ==========================================
+
+def generate_contacts(n):
+
+    contacts = []
+
+    for i in range(n):
+
+        # Every tenth contact shares a number
+        # with the previous contact
+
+        if i > 0 and i % 10 == 0:
+            number = str(9000000000 + i - 1)
+        else:
+            number = str(9000000000 + i)
+
+        # Use different phone formats
+        if i % 2 == 0:
+            phone = "+91 " + number
+        else:
+            phone = number
+
+        contacts.append({
+            "name": "Person " + str(i),
+            "phones": [phone],
+            "emails": ["person" + str(i) + "@gmail.com"]
+        })
+
+    return contacts
+
+
+# ==========================================
+# FUNCTION 8: PERFORMANCE TESTING
+# ==========================================
+
+def performance_test(n):
+
+    contacts = generate_contacts(n)
+
+    start = time.perf_counter()
+
+    result = merge_contacts(contacts)
+
+    end = time.perf_counter()
+
+    efficient_time = end - start
+
+    print("\nCONTACTS:", n)
+    print("Efficient merging time:",
+          round(efficient_time, 6), "seconds")
+
+    print("Merged contact groups:", len(result))
+
+    # Pairwise comparison is practical for 1000
+    # but too expensive for 100000 contacts
+
+    if n == 1000:
+
+        start = time.perf_counter()
+
+        old_result, comparisons = pairwise_merge(contacts)
+
+        end = time.perf_counter()
+
+        old_time = end - start
+
+        print("Pairwise merging time:",
+              round(old_time, 6), "seconds")
+
+        print("Pairwise comparisons:", comparisons)
+
+        print("Dictionary merging time:",
+              round(efficient_time, 6), "seconds")
+
+    return efficient_time
+
+
+# ==========================================
+# MAIN PROGRAM
+# ==========================================
+
+print("================================")
+print(" PHONE CONTACT MERGING SYSTEM")
+print("================================")
+
+contacts = [
+
+    {
+        "name": "Dr. Ravi",
+        "phones": ["+91 98400 12345"],
+        "emails": ["RAVI@gmail.com"]
+    },
+
+    {
+        "name": "ravi kumar",
+        "phones": ["9840012345"],
+        "emails": ["ravi.kumar@gmail.com"]
+    },
+
+    {
+        "name": "Anita",
+        "phones": ["+91-98765-43210"],
+        "emails": ["anita@gmail.com"]
+    },
+
+    {
+        "name": "Anita",
+        "phones": ["9876543210"],
+        "emails": ["ANITA@gmail.com"]
+    },
+
+    {
+        "name": "Kumar",
+        "phones": [],
+        "emails": ["kumar@gmail.com"]
+    }
+]
+
+
+# MERGE SAMPLE CONTACTS
+
+print("\n------ MERGED CONTACTS ------")
+
+merged_contacts = merge_contacts(contacts)
+
+for i, contact in enumerate(merged_contacts, 1):
+
+    print("\nContact", i)
+    print("Names:", contact["names"])
+    print("Phone Numbers:", contact["phones"])
+    print("Email Addresses:", contact["emails"])
+
+
+# ==========================================
+# VERIFY SMALL LIST
+# ==========================================
+
+print("\n------ MANUAL VALIDATION ------")
+
+print("Expected unique groups: 3")
+print("Actual unique groups:", len(merged_contacts))
+
+if len(merged_contacts) == 3:
+    print("Validation successful.")
+else:
+    print("Validation failed.")
+
+
+# ==========================================
+# PERFORMANCE MEASUREMENT
+# ==========================================
+
+print("\n------ PERFORMANCE ANALYSIS ------")
+
+time_1000 = performance_test(1000)
+
+time_100000 = performance_test(100000)
+
+
+# ==========================================
+# FINAL CONCLUSION
+# ==========================================
+
+print("\n------ FINAL CONCLUSION ------")
+
+print("Original method: O(n^2)")
+print("Redesigned method: O(n) average")
+
+print("1,000 contact time:",
+      round(time_1000, 6), "seconds")
+
+print("100,000 contact time:",
+      round(time_100000, 6), "seconds")
+
+print("\nContact merging completed successfully!")
+
