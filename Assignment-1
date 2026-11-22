@@ -1,1 +1,97 @@
 
+
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
+
+# CONSTANTS
+APR_JUN_BASE_RATE = Decimal("32.00")
+FAT_STEP_VALUE = Decimal("0.45")
+FAT_STEP_SIZE = Decimal("0.10")
+BONUS_RATE = Decimal("0.50")
+BONUS_LIMIT = Decimal("500.00")
+
+
+# FUNCTION 1: Select seasonal base rate
+def select_base_rate(month, other_season_rate):
+    if 4 <= month <= 6:
+        return APR_JUN_BASE_RATE
+    else:
+        return Decimal(str(other_season_rate))
+
+
+# FUNCTION 2: Calculate milk rate using fat value
+def calculate_milk_rate(fat, base_rate):
+    fat = Decimal(str(fat))
+
+    steps = (fat / FAT_STEP_SIZE).to_integral_value(
+        rounding=ROUND_FLOOR
+    )
+
+    rate = base_rate + (steps * FAT_STEP_VALUE)
+
+    return rate.quantize(Decimal("0.01"),
+                         rounding=ROUND_HALF_UP)
+
+
+# FUNCTION 3: Calculate bonus
+def calculate_bonus(total_litres):
+    litres = Decimal(str(total_litres))
+
+    if litres > BONUS_LIMIT:
+        return litres * BONUS_RATE
+    else:
+        return Decimal("0.00")
+
+
+# FUNCTION 4: Calculate total payment
+def calculate_payment(fat, snf, litres, month,
+                      other_season_rate):
+
+    base_rate = select_base_rate(
+        month, other_season_rate
+    )
+
+    milk_rate = calculate_milk_rate(
+        fat, base_rate
+    )
+
+    bonus = calculate_bonus(litres)
+
+    milk_amount = Decimal(str(litres)) * milk_rate
+
+    total_payment = milk_amount + bonus
+
+    return milk_rate, bonus, total_payment
+
+
+# MAIN PROGRAM
+print("MILK ANALYSER AND PAYMENT SYSTEM")
+
+fat = Decimal(input("Enter Fat value (2 decimals): "))
+snf = Decimal(input("Enter SNF value (2 decimals): "))
+litres = Decimal(input("Enter total litres supplied in 10 days: "))
+
+month = int(input("Enter month number (1-12): "))
+
+other_rate = Decimal(
+    input("Enter original base rate for other seasons: ")
+)
+
+if fat < 0 or snf < 0 or litres < 0:
+    print("Invalid input. Values cannot be negative.")
+
+elif not (1 <= month <= 12):
+    print("Invalid month.")
+
+else:
+    milk_rate, bonus, payment = calculate_payment(
+        fat, snf, litres, month, other_rate
+    )
+
+    print("\n------ MILK PAYMENT DETAILS ------")
+    print("Fat:", fat)
+    print("SNF:", snf)
+    print("Milk quantity:", litres, "litres")
+    print("Milk rate: Rs.", milk_rate)
+    print("Bonus: Rs.", bonus)
+    print("Total payment: Rs.",
+          payment.quantize(Decimal("0.01")))
