@@ -1,1 +1,498 @@
 
+
+import os
+import re
+import time
+from pathlib import Path
+from collections import defaultdict
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
+DEPARTMENTS = ["CSE", "ECE", "EEE", "MECH", "CIVIL"]
+
+INPUT_FOLDER = Path("input")
+OUTPUT_FOLDER = Path("output")
+
+# ==========================================
+# FUNCTION 1: VALIDATE EMAIL
+# ==========================================
+
+def validate_email(email):
+
+    email = email.strip()
+
+    if " " in email:
+        return False
+
+    if email.count("@") != 1:
+        return False
+
+    local, domain = email.split("@")
+
+    if not local or not domain:
+        return False
+
+    if "." not in domain:
+        return False
+
+    if domain.startswith(".") or domain.endswith("."):
+        return False
+
+    return True
+
+
+# ==========================================
+# FUNCTION 2: NORMALISE REGISTER NUMBER
+# ==========================================
+
+def normalize_register(reg_no):
+    return reg_no.strip().upper()
+
+
+# ==========================================
+# FUNCTION 3: VALIDATE REGISTRATION LINE
+# ==========================================
+
+def validate_record(line):
+
+    fields = line.strip().split(";")
+
+    if len(fields) < 5:
+        return None, "Damaged or incomplete line"
+
+    reg_no = fields[0].strip()
+    name = fields[1].strip()
+    department = fields[2].strip()
+    email = fields[3].strip()
+
+    events = [event.strip() for event in fields[4:]
+              if event.strip()]
+
+    if not reg_no or not name or not department:
+        return None, "Missing required field"
+
+    if not email:
+        return None, "Missing email address"
+
+    if not validate_email(email):
+        return None, "Invalid email address"
+
+    if not events:
+        return None, "No events selected"
+
+    record = {
+        "register": reg_no,
+        "name": name,
+        "department": department,
+        "email": email,
+        "events": events
+    }
+
+    return record, None
+
+
+# ==========================================
+# FUNCTION 4: READ AND PROCESS FILES
+# ==========================================
+
+def process_files():
+
+    OUTPUT_FOLDER.mkdir(exist_ok=True)
+
+    master_list = []
+    seen_registers = set()
+
+    event_participants = defaultdict(list)
+
+    error_messages = []
+
+    total_lines = 0
+    accepted = 0
+    duplicates = 0
+    invalid_records = 0
+    missing_files = 0
+
+    for department in DEPARTMENTS:
+
+        filename = INPUT_FOLDER / (department + ".txt")
+
+        print("\nReading:", filename)
+
+        # Handle missing files
+        if not filename.exists():
+
+            message = "Missing file: " + str(filename)
+
+            print(message)
+            error_messages.append(message)
+
+            missing_files += 1
+            continue
+
+        try:
+            with open(filename, "r", encoding="utf-8") as file:
+
+                for line_number, line in enumerate(file, 1):
+
+                    total_lines += 1
+
+                    if not line.strip():
+                        continue
+
+                    record, error = validate_record(line)
+
+                    # Handle damaged or invalid records
+                    if error:
+
+                        message = (
+                            f"{filename}, Line {line_number}: {error}"
+                        )
+
+                        print(message)
+                        error_messages.append(message)
+
+                        invalid_records += 1
+                        continue
+
+                    reg_key = normalize_register(
+                        record["register"]
+                    )
+
+                    # Duplicate detection using SET
+                    if reg_key in seen_registers:
+
+                        message = (
+                            f"{filename}, Line {line_number}: "
+                            f"Duplicate register number "
+                            f"{record['register']}"
+                        )
+
+                        print(message)
+                        error_messages.append(message)
+
+                        duplicates += 1
+                        continue
+
+                    # Store valid registration
+                    seen_registers.add(reg_key)
+
+                    master_list.append(record)
+
+                    accepted += 1
+
+                    # Add participant to each selected event
+                    for event in record["events"]:
+
+                        event_participants[
+                            event.strip().casefold()
+                        ].append(record)
+
+        except OSError as e:
+
+            message = f"Cannot read {filename}: {e}"
+
+            print(message)
+            error_messages.append(message)
+
+            missing_files += 1
+
+    return (
+        master_list,
+        event_participants,
+        error_messages,
+        total_lines,
+        accepted,
+        duplicates,
+        invalid_records,
+        missing_files
+    )
+
+
+# ==========================================
+# FUNCTION 5: WRITE MASTER LIST
+# ==========================================
+
+def write_master_list(master_list):
+
+    filename = OUTPUT_FOLDER / "master_list.txt"
+
+    with open(filename, "w", encoding="utf-8") as file:
+
+        file.write(
+            "REGISTER;NAME;DEPARTMENT;EMAIL;EVENTS\n"
+        )
+
+        for record in master_list:
+
+            events = ";".join(record["events"])
+
+            file.write(
+                f"{record['register']};"
+                f"{record['name']};"
+                f"{record['department']};"
+                f"{record['email']};"
+                f"{events}\n"
+            )
+
+    print("\nMaster list created successfully.")
+
+
+# ==========================================
+# FUNCTION 6: WRITE EVENT-WISE FILES
+# ==========================================
+
+def write_event_files(event_participants):
+
+    for event_key, participants in event_participants.items():
+
+        # Create a safe filename
+        event_name = participants[0]["events"]
+
+        matching_event = next(
+            e for e in event_name
+            if e.casefold() == event_key
+        )
+
+        safe_name = re.sub(
+            r"[^a-zA-Z0-9_-]", "_", matching_event
+        )
+
+        filename = OUTPUT_FOLDER / (
+            "event_" + safe_name + ".txt"
+        )
+
+        with open(filename, "w", encoding="utf-8") as file:
+
+            file.write(
+                "REGISTER;NAME;DEPARTMENT;EMAIL\n"
+            )
+
+            for record in participants:
+
+                file.write(
+                    f"{record['register']};"
+                    f"{record['name']};"
+                    f"{record['department']};"
+                    f"{record['email']}\n"
+                )
+
+    print("Event-wise files created successfully.")
+
+
+# ==========================================
+# FUNCTION 7: WRITE ERROR LOG
+# ==========================================
+
+def write_error_log(errors):
+
+    filename = OUTPUT_FOLDER / "error_log.txt"
+
+    with open(filename, "w", encoding="utf-8") as file:
+
+        if not errors:
+            file.write("No errors found.\n")
+
+        else:
+            for error in errors:
+                file.write(error + "\n")
+
+    print("Error log created successfully.")
+
+
+# ==========================================
+# FUNCTION 8: WRITE SUMMARY REPORT
+# ==========================================
+
+def write_summary(
+    total,
+    accepted,
+    duplicates,
+    invalid,
+    missing,
+    event_participants
+):
+
+    filename = OUTPUT_FOLDER / "summary_report.txt"
+
+    with open(filename, "w", encoding="utf-8") as file:
+
+        file.write("COLLEGE FEST SUMMARY REPORT\n")
+        file.write("---------------------------\n")
+
+        file.write(f"Total lines processed: {total}\n")
+        file.write(f"Accepted registrations: {accepted}\n")
+        file.write(f"Duplicate registrations: {duplicates}\n")
+        file.write(f"Invalid records: {invalid}\n")
+        file.write(f"Missing/unreadable files: {missing}\n")
+
+        file.write("\nEVENT-WISE PARTICIPANTS\n")
+
+        for event, participants in event_participants.items():
+
+            file.write(
+                f"{event}: {len(participants)} participants\n"
+            )
+
+    print("Summary report created successfully.")
+
+
+# ==========================================
+# FUNCTION 9: PERFORMANCE COMPARISON
+# ==========================================
+
+def set_duplicate_check(numbers):
+
+    seen = set()
+    duplicates = 0
+
+    for number in numbers:
+
+        if number in seen:
+            duplicates += 1
+        else:
+            seen.add(number)
+
+    return duplicates
+
+
+def list_duplicate_check(numbers):
+
+    seen = []
+    duplicates = 0
+    comparisons = 0
+
+    for number in numbers:
+
+        found = False
+
+        for previous in seen:
+
+            comparisons += 1
+
+            if number == previous:
+                found = True
+                break
+
+        if found:
+            duplicates += 1
+        else:
+            seen.append(number)
+
+    return duplicates, comparisons
+
+
+def performance_test():
+
+    print("\n====== PERFORMANCE TEST ======")
+
+    for n in [1000, 100000]:
+
+        numbers = [
+            "REG" + str(i)
+            for i in range(n)
+        ]
+
+        start = time.perf_counter()
+
+        set_duplicate_check(numbers)
+
+        set_time = time.perf_counter() - start
+
+        print("\nNumber of registrations:", n)
+
+        print(
+            "SET method time:",
+            round(set_time, 6),
+            "seconds"
+        )
+
+        if n == 1000:
+
+            start = time.perf_counter()
+
+            duplicates, comparisons = list_duplicate_check(
+                numbers
+            )
+
+            list_time = time.perf_counter() - start
+
+            print(
+                "LIST method time:",
+                round(list_time, 6),
+                "seconds"
+            )
+
+            print("List comparisons:", comparisons)
+
+        else:
+
+            comparisons = n * (n - 1) // 2
+
+            print(
+                "List method theoretical comparisons:",
+                comparisons
+            )
+
+    print("\nSet method: O(n) average time")
+    print("List method: O(n^2) worst-case time")
+    print("Both methods require O(n) storage.")
+
+
+# ==========================================
+# MAIN PROGRAM
+# ==========================================
+
+print("======================================")
+print("   COLLEGE FEST REGISTRATION DESK")
+print("======================================")
+
+(
+    master_list,
+    event_participants,
+    errors,
+    total,
+    accepted,
+    duplicates,
+    invalid,
+    missing
+) = process_files()
+
+
+# WRITE ALL OUTPUT FILES
+
+write_master_list(master_list)
+
+write_event_files(event_participants)
+
+write_error_log(errors)
+
+write_summary(
+    total,
+    accepted,
+    duplicates,
+    invalid,
+    missing,
+    event_participants
+)
+
+
+# DISPLAY SUMMARY
+
+print("\n========== FINAL SUMMARY ==========")
+
+print("Total lines:", total)
+print("Accepted:", accepted)
+print("Duplicates:", duplicates)
+print("Invalid records:", invalid)
+print("Missing files:", missing)
+
+print("\nOutput files saved in:", OUTPUT_FOLDER)
+
+
+# PERFORMANCE TEST
+
+performance_test()
+
+print("\nCOLLEGE FEST PROCESSING COMPLETED!")
