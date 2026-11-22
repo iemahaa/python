@@ -1,1 +1,149 @@
 
+import math
+import time
+
+# --------------------------------
+# ORIGINAL METHOD: BRUTE FORCE
+# --------------------------------
+
+def brute_force(p, g, h):
+    value = 1
+    count = 0
+
+    for x in range(p - 1):
+        count += 1
+
+        if value == h:
+            return x, count
+
+        value = (value * g) % p
+
+    return None, count
+
+
+# --------------------------------
+# REDESIGNED METHOD: BABY-STEP GIANT-STEP
+# --------------------------------
+
+def baby_step_giant_step(p, g, h):
+
+    m = math.isqrt(p - 1)
+
+    if m * m < p - 1:
+        m += 1
+
+    baby_steps = {}
+    value = 1
+
+    # Baby step calculation
+    for j in range(m):
+        if value not in baby_steps:
+            baby_steps[value] = j
+
+        value = (value * g) % p
+
+    # Giant step calculation
+    factor = pow(pow(g, m, p), -1, p)
+
+    gamma = h
+    count = 0
+
+    for i in range(m + 1):
+        count += 1
+
+        if gamma in baby_steps:
+            answer = i * m + baby_steps[gamma]
+
+            if pow(g, answer, p) == h:
+                return answer, count
+
+        gamma = (gamma * factor) % p
+
+    return None, count
+
+
+# --------------------------------
+# MAIN PROGRAM
+# --------------------------------
+
+print("DIFFIE-HELLMAN PERFORMANCE COMPARISON")
+
+p = int(input("Enter prime number p: "))
+g = int(input("Enter generator g: "))
+h = int(input("Enter public value h: "))
+
+# Input validation
+if p < 2 or g <= 0 or g >= p or h < 0 or h >= p:
+    print("Invalid input!")
+    raise SystemExit
+
+# Check prime number
+is_prime = True
+
+for i in range(2, math.isqrt(p) + 1):
+    if p % i == 0:
+        is_prime = False
+        break
+
+if not is_prime:
+    print("Please enter a prime number.")
+    raise SystemExit
+
+# --------------------------------
+# ORIGINAL PROGRAM
+# --------------------------------
+
+start = time.perf_counter()
+
+original_result, original_count = brute_force(p, g, h)
+
+original_time = time.perf_counter() - start
+
+# --------------------------------
+# REDESIGNED PROGRAM
+# --------------------------------
+
+start = time.perf_counter()
+
+new_result, new_count = baby_step_giant_step(p, g, h)
+
+new_time = time.perf_counter() - start
+
+# --------------------------------
+# DISPLAY RESULTS
+# --------------------------------
+
+print("\n========== ORIGINAL METHOD ==========")
+
+print("Private key:", original_result)
+print("Search iterations:", original_count)
+print("Execution time:", original_time, "seconds")
+
+print("\n========== REDESIGNED METHOD ==========")
+
+print("Private key:", new_result)
+print("Giant-step iterations:", new_count)
+print("Baby-step memory entries:", math.isqrt(p - 1) + 1)
+print("Execution time:", new_time, "seconds")
+
+# --------------------------------
+# VALIDATION
+# --------------------------------
+
+print("\n========== VALIDATION ==========")
+
+if original_result == new_result:
+    print("Both algorithms produce the same result.")
+else:
+    print("Results do not match.")
+
+print("\nOriginal complexity: O(p)")
+print("Redesigned complexity: O(sqrt(p))")
+
+print("\n========== FINAL RESULT ==========")
+
+if new_time < original_time:
+    print("Redesigned method is faster.")
+else:
+    print("Original method is faster for this input.")
+
