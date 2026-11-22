@@ -1,1 +1,742 @@
 
+import csv
+import io
+import sqlite3
+import time
+import random
+import re
+import os
+import statistics
+from collections import defaultdict, Counter
+from datetime import datetime, timedelta
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+# =====================================================
+# TASK B1: IMPLEMENT AND VALIDATE CLEANING PIPELINE
+# =====================================================
+
+RAW = """station,date,pm25
+Adyar,2026-10-01,48
+Adyar,2026-10-02,NA
+Adyar,2026-10-03,
+Guindy,2026-10-01,95
+Guindy,2026-10-02,-5
+Guindy,2026-10-03,121
+Adyar,2026-10-04,60
+Guindy,2026-10-04,1500
+"""
+
+
+def load_clean(text):
+    rows = []
+
+    reader = csv.DictReader(io.StringIO(text))
+
+    required = {"station", "date", "pm25"}
+
+    if not reader.fieldnames or not required.issubset(
+        set(reader.fieldnames)
+    ):
+        return rows
+
+    for row in reader:
+        try:
+            station = row["station"].strip()
+            day = row["date"].strip()
+            raw_value = row["pm25"].strip()
+
+            if not station or not day:
+                continue
+
+            if not raw_value or raw_value.upper() == "NA":
+                continue
+
+            value = float(raw_value)
+
+            if value < 0 or value > 999:
+                continue
+
+            datetime.strptime(day, "%Y-%m-%d")
+
+            rows.append((station, day, value))
+
+        except (ValueError, TypeError, KeyError):
+            continue
+
+    return rows
+
+
+def min_max(values):
+
+    if not values:
+        return []
+
+    low = min(values)
+    high = max(values)
+
+    if high == low:
+        return [0.0 for value in values]
+
+    return [
+        round((value - low) / (high - low), 3)
+        for value in values
+    ]
+
+
+print("\n========== TASK B1 ==========")
+
+print("\nBEFORE CLEANING:")
+print(RAW)
+
+clean = load_clean(RAW)
+
+print("\nAFTER CLEANING:")
+print(clean)
+
+print("\nNORMALISED VALUES:")
+print(min_max([pm for _, _, pm in clean]))
+
+
+# B1.3 SQLITE STORAGE
+
+con = sqlite3.connect(":memory:")
+
+con.execute("""
+CREATE TABLE aq (
+    station TEXT,
+    day TEXT,
+    pm25 REAL
+)
+""")
+
+con.executemany(
+    "INSERT INTO aq VALUES (?, ?, ?)",
+    clean
+)
+
+con.commit()
+
+print("\nSQL QUERY RESULTS:")
+
+# Query 1: Average pollution by station
+q1 = con.execute("""
+SELECT station, AVG(pm25)
+FROM aq
+GROUP BY station
+""").fetchall()
+
+print("Average by station:", q1)
+
+# Query 2: Maximum pollution
+q2 = con.execute("""
+SELECT station, MAX(pm25)
+FROM aq
+GROUP BY station
+""").fetchall()
+
+print("Maximum by station:", q2)
+
+# Query 3: Total readings
+q3 = con.execute("""
+SELECT COUNT(*) FROM aq
+""").fetchone()
+
+print("Total valid readings:", q3[0])
+
+
+# B1.4 VISUALISATION
+
+stations = [r[0] for r in q1]
+averages = [r[1] for r in q1]
+
+plt.figure()
+plt.bar(stations, averages)
+plt.xlabel("Monitoring Station")
+plt.ylabel("Average PM2.5")
+plt.title("Average PM2.5 by Station")
+plt.savefig("station_average.png")
+plt.show()
+
+daily = con.execute("""
+SELECT day, AVG(pm25)
+FROM aq
+GROUP BY day
+ORDER BY day
+""").fetchall()
+
+days = [r[0] for r in daily]
+daily_values = [r[1] for r in daily]
+
+plt.figure()
+plt.plot(days, daily_values, marker="o")
+plt.xlabel("Date")
+plt.ylabel("Average PM2.5")
+plt.title("Daily PM2.5 Trend")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.savefig("daily_trend.png")
+plt.show()
+
+
+# =====================================================
+# TASK B2: ENGINEER ADVERSARIAL DATA
+# =====================================================
+
+print("\n========== TASK B2 ==========")
+
+readings = [
+    ("Adyar", "2026-10-01", 48.0),
+    ("Guindy", "2026-10-01", 95.0),
+    ("Guindy", "2026-10-03", 121.0),
+    ("Adyar", "2026-10-04", 60.0)
+]
+
+con2 = sqlite3.connect(":memory:")
+
+con2.execute("""
+CREATE TABLE aq (
+    station TEXT,
+    day TEXT,
+    pm25 REAL
+)
+""")
+
+# TODO 1: One executemany call
+con2.executemany(
+    "INSERT INTO aq VALUES (?, ?, ?)",
+    readings
+)
+
+con2.commit()
+
+
+# TODO 2: Parameterised query
+def station_average(name):
+
+    result = con2.execute(
+        "SELECT AVG(pm25) FROM aq WHERE station = ?",
+        (name,)
+    ).fetchone()
+
+    return result[0]
+
+
+print("Adyar average:", station_average("Adyar"))
+print("Guindy average:", station_average("Guindy"))
+
+print(
+    "Injection attempt:",
+    station_average("Adyar' OR '1'='1")
+)
+
+
+# Demonstrate unsafe SQL string construction
+attack = "Adyar' OR '1'='1"
+
+unsafe_query = (
+    "SELECT AVG(pm25) FROM aq WHERE station = '"
+    + attack + "'"
+)
+
+print("\nUnsafe SQL query:")
+print(unsafe_query)
+
+print("Unsafe query result:",
+      con2.execute(unsafe_query).fetchone())
+
+print("Safe query result:",
+      station_average(attack))
+
+
+# Test adversarial files
+print("\nFILE VALIDATION TESTS:")
+
+test_files = {
+    "missing_column.csv":
+        "station,date\nAdyar,2026-10-01",
+
+    "wrong_delimiter.csv":
+        "station;date;pm25\nAdyar;2026-10-01;48",
+
+    "empty.csv": "",
+
+    "normal.csv":
+        "station,date,pm25\nAdyar,2026-10-01,48"
+}
+
+for filename, content in test_files.items():
+
+    try:
+        result = load_clean(content)
+
+        print(filename, "=>", result)
+
+    except Exception as error:
+        print(filename, "=> Error:", error)
+
+
+# Different text encoding test
+try:
+    sample = "station,date,pm25\nAdyar,2026-10-01,48"
+
+    encoded = sample.encode("utf-16")
+    decoded = encoded.decode("utf-16")
+
+    print("UTF-16 test:", load_clean(decoded))
+
+except UnicodeError:
+    print("Encoding error detected.")
+
+
+# =====================================================
+# TASK B3: LOOPS VS LIBRARIES VS SQL
+# =====================================================
+
+print("\n========== TASK B3 ==========")
+
+
+def loop_daily_mean(filename):
+
+    totals = defaultdict(float)
+    counts = defaultdict(int)
+
+    with open(filename, "r", encoding="utf-8") as file:
+
+        reader = csv.DictReader(file)
+
+        for row in reader:
+
+            key = (row["station"], row["day"])
+
+            totals[key] += float(row["pm25"])
+            counts[key] += 1
+
+    return {
+        key: totals[key] / counts[key]
+        for key in totals
+    }
+
+
+def pandas_daily_mean(filename):
+
+    df = pd.read_csv(filename)
+
+    result = df.groupby(
+        ["station", "day"]
+    )["pm25"].mean()
+
+    return result.to_dict()
+
+
+def sql_daily_mean(filename):
+
+    database = sqlite3.connect(":memory:")
+
+    database.execute("""
+    CREATE TABLE readings (
+        station TEXT,
+        day TEXT,
+        pm25 REAL
+    )
+    """)
+
+    def read_records():
+
+        with open(filename, "r", encoding="utf-8") as file:
+
+            reader = csv.DictReader(file)
+
+            for row in reader:
+
+                yield (
+                    row["station"],
+                    row["day"],
+                    float(row["pm25"])
+                )
+
+    database.executemany(
+        "INSERT INTO readings VALUES (?, ?, ?)",
+        read_records()
+    )
+
+    result = database.execute("""
+    SELECT station, day, AVG(pm25)
+    FROM readings
+    GROUP BY station, day
+    """).fetchall()
+
+    database.close()
+
+    return {
+        (station, day): avg
+        for station, day, avg in result
+    }
+
+
+# Generate yearly data
+def generate_data(station_count):
+
+    filename = f"data_{station_count}.csv"
+
+    start_date = datetime(2026, 1, 1)
+
+    with open(filename, "w", newline="",
+              encoding="utf-8") as file:
+
+        writer = csv.writer(file)
+
+        writer.writerow(["station", "day", "pm25"])
+
+        for station in range(station_count):
+
+            name = f"Station_{station + 1}"
+
+            for hour in range(8760):
+
+                day = start_date + timedelta(hours=hour)
+
+                value = 30 + (station % 50) + (hour % 100) / 10
+
+                writer.writerow([
+                    name,
+                    day.strftime("%Y-%m-%d"),
+                    value
+                ])
+
+    return filename
+
+
+# Small-data correctness test
+small_file = "small_test.csv"
+
+with open(small_file, "w", newline="",
+          encoding="utf-8") as file:
+
+    writer = csv.writer(file)
+
+    writer.writerow(["station", "day", "pm25"])
+
+    writer.writerows([
+        ["Adyar", "2026-10-01", 48],
+        ["Adyar", "2026-10-01", 60],
+        ["Guindy", "2026-10-01", 95],
+        ["Guindy", "2026-10-01", 105]
+    ])
+
+loop_result = loop_daily_mean(small_file)
+pandas_result = pandas_daily_mean(small_file)
+sql_result = sql_daily_mean(small_file)
+
+print("Loop result:", loop_result)
+print("Pandas result:", pandas_result)
+print("SQL result:", sql_result)
+
+print(
+    "All methods agree:",
+    loop_result == pandas_result == sql_result
+)
+
+
+# Performance measurements
+for stations in [1, 12, 120]:
+
+    filename = generate_data(stations)
+
+    print(f"\nTesting {stations} stations")
+
+    start = time.perf_counter()
+    loop_result = loop_daily_mean(filename)
+    loop_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    pandas_result = pandas_daily_mean(filename)
+    pandas_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    sql_result = sql_daily_mean(filename)
+    sql_time = time.perf_counter() - start
+
+    print("Total readings:", stations * 8760)
+
+    print("Python loops:", round(loop_time, 4), "seconds")
+    print("Pandas:", round(pandas_time, 4), "seconds")
+    print("SQLite:", round(sql_time, 4), "seconds")
+
+
+# =====================================================
+# TASK B4: SENTIMENT SCORING AND SUMMARISATION
+# =====================================================
+
+print("\n========== TASK B4 ==========")
+
+POSITIVE = {
+    "good", "clean", "fast", "helpful", "improved"
+}
+
+NEGATIVE = {
+    "bad", "dirty", "slow", "rude", "smoke", "broken"
+}
+
+NEGATORS = {"not", "never", "no"}
+
+
+def score(text):
+
+    words = re.findall(r"\b[\w']+\b", text.lower())
+
+    total = 0
+    previous_negator = False
+
+    for word in words:
+
+        if word in NEGATORS:
+            previous_negator = True
+            continue
+
+        value = 0
+
+        if word in POSITIVE:
+            value = 1
+
+        elif word in NEGATIVE:
+            value = -1
+
+        if previous_negator:
+            value = -value
+
+        total += value
+
+        previous_negator = False
+
+    return total
+
+
+def label(text):
+
+    value = score(text)
+
+    if value > 0:
+        return "positive"
+
+    elif value < 0:
+        return "negative"
+
+    return "neutral"
+
+
+# Required example tests
+complaints = [
+    "Roads are clean and the bus was fast.",
+    "Smoke from the factory, air is bad.",
+    "The staff were not helpful.",
+    "Not bad, service improved.",
+    "The roads are dirty and the service is slow.",
+    "The bus is good and helpful.",
+    "The factory smoke is bad.",
+    "The roads are not clean.",
+    "The service is never good.",
+    "The bus is not slow.",
+    "The roads are clean but the bus is slow.",
+    "The service is bad but the staff are helpful.",
+    "I am not unhappy with the improved service.",
+    "The bus is fast but the roads are dirty.",
+    "The staff are rude and the road is broken."
+]
+
+# Add more complaints to make at least 50
+positive_texts = [
+    "The roads are clean and the service is good.",
+    "The bus is fast and helpful.",
+    "The transport service improved.",
+    "The staff are helpful and good.",
+    "The air is clean."
+]
+
+negative_texts = [
+    "The roads are dirty and broken.",
+    "The bus is slow and bad.",
+    "Smoke pollution is bad.",
+    "The staff are rude.",
+    "The service is slow."
+]
+
+for i in range(4):
+    complaints.extend(positive_texts)
+    complaints.extend(negative_texts)
+
+
+# Display sentiment labels
+print("\nSENTIMENT RESULTS:")
+
+for complaint in complaints:
+
+    print(
+        f"{label(complaint):8} | {complaint}"
+    )
+
+
+# Compare with manually assigned labels
+manual_labels = []
+
+for complaint in complaints:
+
+    text = complaint.lower()
+
+    if any(word in text for word in [
+        "dirty", "broken", "rude", "smoke",
+        "slow", "bad", "not helpful"
+    ]):
+        manual_labels.append("negative")
+
+    elif any(word in text for word in [
+        "clean", "good", "fast", "helpful",
+        "improved"
+    ]):
+        manual_labels.append("positive")
+
+    else:
+        manual_labels.append("neutral")
+
+
+agreements = sum(
+    label(c) == actual
+    for c, actual in zip(complaints, manual_labels)
+)
+
+print("\nTotal complaints:", len(complaints))
+print("Labels agreeing with manual review:", agreements)
+
+
+# SIMPLE FREQUENCY-BASED SUMMARISER
+def summarise(text, k=2):
+
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+
+    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+
+    stop_words = {
+        "the", "is", "are", "a", "an", "and",
+        "was", "were", "to", "of", "in", "on",
+        "but", "with", "from", "this", "that"
+    }
+
+    important = [
+        word for word in words
+        if word not in stop_words
+    ]
+
+    frequency = Counter(important)
+
+    ranked = sorted(
+        enumerate(sentences),
+        key=lambda item: (
+            sum(frequency[w] for w in
+                re.findall(r"\b[a-zA-Z]+\b",
+                           item[1].lower())),
+            -item[0]
+        ),
+        reverse=True
+    )
+
+    selected = sorted(
+        ranked[:k],
+        key=lambda item: item[0]
+    )
+
+    return " ".join(sentence for _, sentence in selected)
+
+
+# Compare first-k sentence summary
+def first_k_summary(text, k=2):
+
+    sentences = re.split(
+        r"(?<=[.!?])\s+", text.strip()
+    )
+
+    return " ".join(sentences[:k])
+
+
+print("\nSUMMARY COMPARISON:")
+
+example = (
+    "The roads are dirty. "
+    "Residents reported smoke pollution. "
+    "The bus service improved. "
+    "The staff were helpful."
+)
+
+print("Frequency summary:", summarise(example))
+print("First two sentences:", first_k_summary(example))
+
+
+# =====================================================
+# B4.2 DATABASE INDEX PERFORMANCE
+# =====================================================
+
+print("\nDATABASE INDEX TEST:")
+
+db = sqlite3.connect(":memory:")
+
+db.execute("""
+CREATE TABLE readings (
+    station TEXT,
+    day TEXT,
+    pm25 REAL
+)
+""")
+
+db.executemany(
+    "INSERT INTO readings VALUES (?, ?, ?)",
+    (
+        (station, day, float(value))
+        for station, day, value in clean
+    )
+)
+
+db.commit()
+
+query = """
+SELECT AVG(pm25)
+FROM readings
+WHERE station = ? AND day = ?
+"""
+
+start = time.perf_counter()
+
+for _ in range(1000):
+    db.execute(
+        query,
+        ("Adyar", "2026-10-01")
+    ).fetchone()
+
+before_index = time.perf_counter() - start
+
+db.execute("""
+CREATE INDEX idx_station_day
+ON readings(station, day)
+""")
+
+db.commit()
+
+start = time.perf_counter()
+
+for _ in range(1000):
+    db.execute(
+        query,
+        ("Adyar", "2026-10-01")
+    ).fetchone()
+
+after_index = time.perf_counter() - start
+
+print("Before index:", round(before_index, 6))
+print("After index:", round(after_index, 6))
+
+db.close()
+con.close()
+con2.close()
+
+print("\nALL TASKS COMPLETED SUCCESSFULLY!")
+
